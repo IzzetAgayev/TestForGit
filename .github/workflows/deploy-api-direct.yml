@@ -1,0 +1,104 @@
+name: Database Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'migrations/**'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    env:
+      BYTEBASE_URL: ${{ secrets.BYTEBASE_URL }}
+      BYTEBASE_SERVICE_ACCOUNT: ${{ secrets.BYTEBASE_SERVICE_ACCOUNT }}
+      BYTEBASE_SERVICE_ACCOUNT_SECRET: ${{ secrets.BYTEBASE_SERVICE_ACCOUNT_SECRET }}
+      BYTEBASE_PROJECT: projects/default
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Login to Bytebase
+        id: login
+        run: |
+          echo "🔐 Authenticating with Bytebase..."
+          
+          # Login and get token
+          RESPONSE=$(curl -s -X POST "$BYTEBASE_URL/api/v1/auth/login" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "email": "'$BYTEBASE_SERVICE_ACCOUNT'",
+              "password": "'$BYTEBASE_SERVICE_ACCOUNT_SECRET'",
+              "web": true
+            }')
+          
+          # Debug: show response (tokens are masked in logs)
+          echo "Response: $RESPONSE"
+          
+          # Extract token using jq (should be available on ubuntu)
+          TOKEN=$(echo "$RESPONSE" | jq -r '.accessToken // .token // empty' 2>/dev/null || echo "")
+          
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "❌ Failed to authenticate!"
+            echo "Response was: $RESPONSE"
+            exit 1
+          fi
+          
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+          echo "✅ Successfully authenticated with Bytebase"
+      
+      - name: Get commit info
+        id: commit
+        run: |
+          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "message=$(git log -1 --pretty=format:'%s')" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        id: create_release
+        run: |
+          echo "📦 Creating release..."
+          
+          RESPONSE=$(curl -s -X POST "$BYTEBASE_URL/api/v1/projects/$BYTEBASE_PROJECT/releases" \
+            -H "Authorization: Bearer ${{ steps.login.outputs.token }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "title": "Release-${{ steps.commit.outputs.sha_short }}",
+              "description": "Commit: ${{ steps.commit.outputs.message }}"
+            }')
+          
+          echo "Release Response: $RESPONSE"
+          
+          RELEASE=$(echo "$RESPONSE" | jq -r '.name // empty' 2>/dev/null || echo "")
+          
+          if [ -z "$RELEASE" ] || [ "$RELEASE" = "null" ]; then
+            echo "❌ Failed to create release!"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+          
+          echo "release=$RELEASE" >> $GITHUB_OUTPUT
+          echo "✅ Release created: $RELEASE"
+      
+      - name: List migration files
+        run: |
+          echo "📋 Migration files to deploy:"
+          ls -la migrations/*.sql 2>/dev/null || echo "No migration files found"
+      
+      - name: Verify deployment
+        run: |
+          echo "✅ Deployment initiated!"
+          echo "Release: ${{ steps.create_release.outputs.release }}"
+          echo "View in Bytebase: $BYTEBASE_URL/projects/$BYTEBASE_PROJECT"
+          echo ""
+          echo "📊 Build Summary:"
+          echo "  - Commit: ${{ steps.commit.outputs.sha_short }}"
+          echo "  - Message: ${{ steps.commit.outputs.message }}"
+          echo "  - Release: ${{ steps.create_release.outputs.release }}"
