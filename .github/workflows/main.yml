@@ -1,0 +1,18 @@
+name: Bytebase GitOps
+on:
+  push:
+    branches:
+      - main  # Make sure this matches your branch name (main or master)
+    paths:
+      - 'migrations/**'  # This tells GitHub to run ONLY when the migrations folder changes
+jobs:
+  bytebase-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bytebase Release
+        uses: bytebase/bytebase-action@v1
+        with:
+          bytebase-url: ${{ vars.BYTEBASE_URL }}
+          service-key: ${{ secrets.BYTEBASE_SERVICE_ACCOUNT_SECRET }}
+          base-dir: 'migrations'
