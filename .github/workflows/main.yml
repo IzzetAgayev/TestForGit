@@ -2,9 +2,9 @@ name: Bytebase GitOps
 on:
   push:
     branches:
-      - main  # Make sure this matches your branch name (main or master)
+      - master  # I noticed your branch in the screenshot is "master", not "main"
     paths:
-      - 'migrations/**'  # This tells GitHub to run ONLY when the migrations folder changes
+      - 'migrations/**'
 jobs:
   bytebase-release:
     runs-on: ubuntu-latest
