@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Bytebase Release
-        uses: bytebase/bytebase-action@v1
+        uses: bytebase/bytebase-action@main  # Add '@main' or a specific version like '@v1'
         with:
           bytebase-url: ${{ vars.BYTEBASE_URL }}
           service-key: ${{ secrets.BYTEBASE_SERVICE_ACCOUNT_SECRET }}
