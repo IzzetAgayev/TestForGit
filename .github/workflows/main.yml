@@ -25,4 +25,4 @@ jobs:
           # Update this with your actual Project ID (e.g., 'projects/sample')
           BYTEBASE_PROJECT: 'projects/default' 
         run: |
-          bytebase-action rollout --url=${{ env.BYTEBASE_URL }} --project=${{ env.BYTEBASE_PROJECT }} --file-pattern='migrations/*.sql'
+          bytebase-action rollout --url=${{ env.BYTEBASE_URL }} --project=${{ env.BYTEBASE_PROJECT }} --file-pattern='migrations/*.sql' 
