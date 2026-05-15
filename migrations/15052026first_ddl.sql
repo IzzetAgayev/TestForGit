@@ -1,1 +1,1 @@
-create table fromgit(id int)
+create table fromgit(id int);
