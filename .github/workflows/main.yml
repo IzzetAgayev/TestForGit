@@ -9,8 +9,6 @@ on:
 jobs:
   bytebase-release:
     runs-on: ubuntu-latest
-    container:
-      image: bytebase/bytebase-action:latest
     
     steps:
       - name: Checkout
