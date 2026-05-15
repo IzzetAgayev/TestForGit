@@ -2,17 +2,27 @@ name: Bytebase GitOps
 on:
   push:
     branches:
-      - master  # I noticed your branch in the screenshot is "master", not "main"
+      - master
     paths:
       - 'migrations/**'
+
 jobs:
   bytebase-release:
     runs-on: ubuntu-latest
+    # This is the "secret sauce" to fix the 'not found' error
+    container:
+      image: bytebase/bytebase-action:latest
+    
     steps:
-      - uses: actions/checkout@v4
-      - name: Bytebase Release
-        uses: bytebase/bytebase-action@main  # Add '@main' or a specific version like '@v1'
-        with:
-          bytebase-url: ${{ vars.BYTEBASE_URL }}
-          service-key: ${{ secrets.BYTEBASE_SERVICE_ACCOUNT_SECRET }}
-          base-dir: 'migrations'
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Roll out database change
+        env:
+          BYTEBASE_URL: ${{ vars.BYTEBASE_URL }}
+          BYTEBASE_SERVICE_ACCOUNT: 'api@service.bytebase.com' # Use your Service Account Email
+          BYTEBASE_SERVICE_ACCOUNT_SECRET: ${{ secrets.BYTEBASE_SERVICE_ACCOUNT_SECRET }}
+          # Update this with your actual Project ID (e.g., 'projects/sample')
+          BYTEBASE_PROJECT: 'projects/default' 
+        run: |
+          bytebase-action rollout --url=${{ env.BYTEBASE_URL }} --project=${{ env.BYTEBASE_PROJECT }} --file-pattern='migrations/*.sql'
