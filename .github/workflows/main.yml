@@ -9,10 +9,12 @@ on:
 jobs:
   bytebase-release:
     runs-on: ubuntu-latest
+    container:
+      image: bytebase/bytebase-action:latest
     
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.0
 
       - name: Roll out database change
         env:
@@ -21,4 +23,4 @@ jobs:
           BYTEBASE_SERVICE_ACCOUNT_SECRET: ${{ secrets.BYTEBASE_SERVICE_ACCOUNT_SECRET }}
           BYTEBASE_PROJECT: 'projects/default' 
         run: |
-          bytebase-action rollout --url=${{ env.BYTEBASE_URL }} --project=${{ env.BYTEBASE_PROJECT }} --file-pattern='migrations/*.sql'
+          /app/bytebase-action rollout --url=${{ env.BYTEBASE_URL }} --project=${{ env.BYTEBASE_PROJECT }} --file-pattern='migrations/*.sql'
