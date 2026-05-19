@@ -39,34 +39,25 @@ jobs:
         id: changes
         shell: powershell
         run: |
-          $changedFiles = @()
-          $allFiles = Get-ChildItem -Path "migrations" -Filter "*.sql" -File
+          $headers = @{ Authorization = "Bearer ${{ github.token }}" }
+          $commit = Invoke-RestMethod -Uri "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}" `
+            -Headers $headers
 
-          foreach ($f in $allFiles) {
-            $commitMsg = "${{ github.event.head_commit.message }}"
-            $fileName = $f.Name
+          $sqlFiles = $commit.files | Where-Object { $_.filename -like "migrations/*.sql" }
 
-            # Check if this file was mentioned in changed files from GitHub context
-            $changedPaths = @()
-            $commits = '${{ toJson(github.event.commits) }}' | ConvertFrom-Json
-            foreach ($c in $commits) {
-              $changedPaths += $c.added
-              $changedPaths += $c.modified
-            }
-
-            if ($changedPaths -contains "migrations/$fileName") {
-              $changedFiles += $f.FullName
-            }
-          }
-
-          if ($changedFiles.Count -eq 0) {
-            Write-Host "No changed SQL files detected"
+          if (-not $sqlFiles -or $sqlFiles.Count -eq 0) {
+            Write-Host "No SQL changes detected"
             "has_changes=false" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
             exit 0
           }
 
-          Write-Host "Changed SQL files:"
-          $changedFiles | ForEach-Object { Write-Host "  $_" }
+          $changedFiles = @()
+          foreach ($f in $sqlFiles) {
+            $localPath = Join-Path $env:GITHUB_WORKSPACE $f.filename
+            $changedFiles += $localPath
+            Write-Host "Changed: $($f.filename) ($($f.status))"
+          }
+
           $fileList = ($changedFiles -join ",")
           "has_changes=true" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
           "files=$fileList" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
