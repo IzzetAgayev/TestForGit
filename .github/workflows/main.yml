@@ -39,15 +39,35 @@ jobs:
         id: changes
         shell: powershell
         run: |
-          $files = git diff --name-only HEAD~1 HEAD -- "migrations/*.sql"
-          if (-not $files) {
-            Write-Host "No SQL changes detected"
+          $changedFiles = @()
+          $allFiles = Get-ChildItem -Path "migrations" -Filter "*.sql" -File
+
+          foreach ($f in $allFiles) {
+            $commitMsg = "${{ github.event.head_commit.message }}"
+            $fileName = $f.Name
+
+            # Check if this file was mentioned in changed files from GitHub context
+            $changedPaths = @()
+            $commits = '${{ toJson(github.event.commits) }}' | ConvertFrom-Json
+            foreach ($c in $commits) {
+              $changedPaths += $c.added
+              $changedPaths += $c.modified
+            }
+
+            if ($changedPaths -contains "migrations/$fileName") {
+              $changedFiles += $f.FullName
+            }
+          }
+
+          if ($changedFiles.Count -eq 0) {
+            Write-Host "No changed SQL files detected"
             "has_changes=false" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
             exit 0
           }
+
           Write-Host "Changed SQL files:"
-          $files | ForEach-Object { Write-Host "  $_" }
-          $fileList = ($files -join ",")
+          $changedFiles | ForEach-Object { Write-Host "  $_" }
+          $fileList = ($changedFiles -join ",")
           "has_changes=true" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
           "files=$fileList" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
 
@@ -60,12 +80,8 @@ jobs:
           $project = "${{ secrets.BYTEBASE_PROJECT }}"
           $headers = @{ Authorization = "Bearer $token" }
 
-          # Get database list to find target
           $dbResponse = Invoke-RestMethod -Uri "$baseUrl/v1/$project/databases" `
             -Method GET -Headers $headers
-
-          Write-Host "Available databases:"
-          $dbResponse.databases | ForEach-Object { Write-Host "  $($_.name)" }
 
           $targetDb = $dbResponse.databases | Where-Object { $_.name -match "databases/test$" } | Select-Object -First 1
           if (-not $targetDb) {
@@ -84,11 +100,9 @@ jobs:
             $sql = Get-Content -Path $file -Raw
             Write-Host "SQL: $sql"
 
-            # Base64 encode for sheet
             $sqlBytes = [System.Text.Encoding]::UTF8.GetBytes($sql)
             $sqlBase64 = [Convert]::ToBase64String($sqlBytes)
 
-            # 1. Create Sheet
             Write-Host "Creating sheet..."
             $sheetBody = @{
               title   = "Migration: $(Split-Path $file -Leaf)"
@@ -101,7 +115,6 @@ jobs:
 
             Write-Host "Sheet: $($sheet.name)"
 
-            # 2. Create Plan
             Write-Host "Creating plan..."
             $planBody = @{
               steps = @(
@@ -126,7 +139,6 @@ jobs:
 
             Write-Host "Plan: $($plan.name)"
 
-            # 3. Create Issue
             Write-Host "Creating issue..."
             $issueBody = @{
               title       = "Migration: $(Split-Path $file -Leaf)"
@@ -141,7 +153,6 @@ jobs:
 
             Write-Host "Issue: $($issue.name)"
 
-            # 4. Create Rollout
             Write-Host "Creating rollout..."
             $rolloutBody = @{
               plan = $plan.name
