@@ -95,8 +95,11 @@ jobs:
             $sqlBase64 = [Convert]::ToBase64String($sqlBytes)
 
             Write-Host "Creating sheet..."
+            $sqlBytes = [System.Text.Encoding]::UTF8.GetBytes($sql)
+            $sqlBase64 = [Convert]::ToBase64String($sqlBytes)
+
             $sheetBody = @{
-              content = $sql
+              content = $sqlBase64
             } | ConvertTo-Json
 
             $sheet = Invoke-RestMethod -Uri "$baseUrl/v1/$project/sheets" `
