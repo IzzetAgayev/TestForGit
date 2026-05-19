@@ -96,8 +96,7 @@ jobs:
 
             Write-Host "Creating sheet..."
             $sheetBody = @{
-              title   = "Migration: $(Split-Path $file -Leaf)"
-              content = $sqlBase64
+              content = $sql
             } | ConvertTo-Json
 
             $sheet = Invoke-RestMethod -Uri "$baseUrl/v1/$project/sheets" `
