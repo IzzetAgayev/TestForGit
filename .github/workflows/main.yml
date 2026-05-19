@@ -1,39 +1,55 @@
-- name: Login to Bytebase
-  id: login
-  run: |
-    echo "🔐 Authenticating with Bytebase..."
-    
-    # Verify required secrets are set
-    if [ -z "$BYTEBASE_URL" ] || [ -z "$BYTEBASE_SERVICE_ACCOUNT" ] || [ -z "$BYTEBASE_SERVICE_ACCOUNT_SECRET" ]; then
-      echo "❌ Missing required secrets: BYTEBASE_URL, BYTEBASE_SERVICE_ACCOUNT, or BYTEBASE_SERVICE_ACCOUNT_SECRET"
-      exit 1
-    fi
-    
-    # Login and get token with verbose output
-    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BYTEBASE_URL/api/v1/auth/login" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "email": "'$BYTEBASE_SERVICE_ACCOUNT'",
-        "password": "'$BYTEBASE_SERVICE_ACCOUNT_SECRET'",
-        "web": true
-      }')
-    
-    # Extract HTTP status code (last line)
-    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | sed '$d')
-    
-    echo "HTTP Status: $HTTP_CODE"
-    echo "Response Body: $BODY"
-    
-    # Extract token
-    TOKEN=$(echo "$BODY" | jq -r '.accessToken // .token // empty' 2>/dev/null || echo "")
-    
-    if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ] || [ "$HTTP_CODE" != "200" ]; then
-      echo "❌ Failed to authenticate!"
-      echo "HTTP Code: $HTTP_CODE"
-      echo "Response: $BODY"
-      exit 1
-    fi
-    
-    echo "token=$TOKEN" >> $GITHUB_OUTPUT
-    echo "✅ Successfully authenticated with Bytebase"
+name: Deploy Migrations via Bytebase
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'migrations/**'
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Login to Bytebase
+        id: login
+        shell: bash
+        run: |
+          echo "Authenticating with Bytebase..."
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ secrets.BYTEBASE_URL }}/v1/auth/login" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "email": "${{ secrets.BYTEBASE_SERVICE_ACCOUNT }}",
+              "password": "${{ secrets.BYTEBASE_SERVICE_ACCOUNT_SECRET }}",
+              "web": true
+            }')
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Status: $HTTP_CODE"
+
+          TOKEN=$(echo "$BODY" | jq -r '.accessToken // .token // empty' 2>/dev/null || echo "")
+
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ] || [ "$HTTP_CODE" != "200" ]; then
+            echo "Failed to authenticate!"
+            echo "Response: $BODY"
+            exit 1
+          fi
+
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+          echo "Successfully authenticated with Bytebase"
+
+      - name: Test connectivity
+        shell: bash
+        run: |
+          TOKEN="${{ steps.login.outputs.token }}"
+          RESPONSE=$(curl -s -X GET "${{ secrets.BYTEBASE_URL }}/v1/${{ secrets.BYTEBASE_PROJECT }}/databases" \
+            -H "Authorization: Bearer $TOKEN")
+          echo "Databases: $RESPONSE"
