@@ -18,38 +18,49 @@ jobs:
 
       - name: Login to Bytebase
         id: login
-        shell: bash
+        shell: pwsh
         run: |
-          echo "Authenticating with Bytebase..."
+          Write-Host "Authenticating with Bytebase..."
 
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ secrets.BYTEBASE_URL }}/v1/auth/login" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "email": "${{ secrets.BYTEBASE_SERVICE_ACCOUNT }}",
-              "password": "${{ secrets.BYTEBASE_SERVICE_ACCOUNT_SECRET }}",
-              "web": true
-            }')
+          $body = @{
+            email    = "${{ secrets.BYTEBASE_SERVICE_ACCOUNT }}"
+            password = "${{ secrets.BYTEBASE_SERVICE_ACCOUNT_SECRET }}"
+            web      = $true
+          } | ConvertTo-Json
 
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
-
-          echo "HTTP Status: $HTTP_CODE"
-
-          TOKEN=$(echo "$BODY" | jq -r '.accessToken // .token // empty' 2>/dev/null || echo "")
-
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ] || [ "$HTTP_CODE" != "200" ]; then
-            echo "Failed to authenticate!"
-            echo "Response: $BODY"
+          try {
+            $response = Invoke-RestMethod -Uri "${{ secrets.BYTEBASE_URL }}/v1/auth/login" `
+              -Method POST `
+              -ContentType "application/json" `
+              -Body $body
+          } catch {
+            Write-Host "Failed to authenticate!"
+            Write-Host "Error: $_"
+            Write-Host "Response: $($_.Exception.Response)"
             exit 1
-          fi
+          }
 
-          echo "token=$TOKEN" >> $GITHUB_OUTPUT
-          echo "Successfully authenticated with Bytebase"
+          $token = $response.accessToken
+          if (-not $token) { $token = $response.token }
+
+          if (-not $token) {
+            Write-Host "No token in response!"
+            Write-Host "Response: $($response | ConvertTo-Json)"
+            exit 1
+          }
+
+          "token=$token" | Out-File -Append -FilePath $env:GITHUB_OUTPUT
+          Write-Host "Successfully authenticated with Bytebase"
 
       - name: Test connectivity
-        shell: bash
+        shell: pwsh
         run: |
-          TOKEN="${{ steps.login.outputs.token }}"
-          RESPONSE=$(curl -s -X GET "${{ secrets.BYTEBASE_URL }}/v1/${{ secrets.BYTEBASE_PROJECT }}/databases" \
-            -H "Authorization: Bearer $TOKEN")
-          echo "Databases: $RESPONSE"
+          $token = "${{ steps.login.outputs.token }}"
+          $headers = @{ Authorization = "Bearer $token" }
+
+          $response = Invoke-RestMethod -Uri "${{ secrets.BYTEBASE_URL }}/v1/${{ secrets.BYTEBASE_PROJECT }}/databases" `
+            -Method GET `
+            -Headers $headers
+
+          Write-Host "Databases:"
+          $response | ConvertTo-Json -Depth 5
