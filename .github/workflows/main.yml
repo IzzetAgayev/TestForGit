@@ -62,7 +62,7 @@ jobs:
           "has_changes=true" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
           "files=$fileList" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
 
-      - name: Create Bytebase issues for migrations
+      - name: Create and run Bytebase migrations
         if: steps.changes.outputs.has_changes == 'true'
         shell: powershell
         run: |
@@ -134,7 +134,27 @@ jobs:
               -Headers $headers -Body '{}'
             Write-Host "Rollout: $($rollout.name)"
 
-            Write-Host "=== Issue created. Waiting for DBA approval in Bytebase UI ==="
+            # 5. Task-lari run et
+            foreach ($stage in $rollout.stages) {
+              $taskNames = @()
+              foreach ($task in $stage.tasks) {
+                $taskNames += $task.name
+              }
+              if ($taskNames.Count -gt 0) {
+                $runBody = @{ tasks = $taskNames } | ConvertTo-Json
+                try {
+                  Invoke-RestMethod -Uri "$baseUrl/v1/$($stage.name)/tasks:batchRun" `
+                    -Method POST -ContentType "application/json" `
+                    -Headers $headers -Body $runBody
+                  Write-Host "Tasks running in stage: $($stage.name)"
+                } catch {
+                  $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                  Write-Host "Run error: $($reader.ReadToEnd())"
+                }
+              }
+            }
+
+            Write-Host "=== Done: $fileName ==="
           }
 
-          Write-Host "`nAll migration issues created. DBA approval required in Bytebase."
+          Write-Host "`nAll migrations submitted and running!"
