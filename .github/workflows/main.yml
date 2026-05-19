@@ -28,8 +28,8 @@ jobs:
           $response = Invoke-RestMethod -Uri "${{ secrets.BYTEBASE_URL }}/v1/auth/login" `
             -Method POST -ContentType "application/json" -Body $body
 
-          $token = $response.accessToken
-          if (-not $token) { $token = $response.token }
+          $token = $response.token
+          if (-not $token) { $token = $response.accessToken }
           if (-not $token) { Write-Host "No token!"; exit 1 }
 
           "token=$token" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
@@ -62,7 +62,7 @@ jobs:
           "has_changes=true" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
           "files=$fileList" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
 
-      - name: Apply migrations to Bytebase
+      - name: Create Bytebase issues for migrations
         if: steps.changes.outputs.has_changes == 'true'
         shell: powershell
         run: |
@@ -71,92 +71,70 @@ jobs:
           $project = "${{ secrets.BYTEBASE_PROJECT }}"
           $headers = @{ Authorization = "Bearer $token" }
 
-          $dbResponse = Invoke-RestMethod -Uri "$baseUrl/v1/$project/databases" `
-            -Method GET -Headers $headers
-
-          $targetDb = $dbResponse.databases | Where-Object { $_.name -match "databases/test$" } | Select-Object -First 1
-          if (-not $targetDb) {
-            Write-Host "Target database 'test' not found!"
-            exit 1
-          }
-          Write-Host "Target: $($targetDb.name)"
-
           $files = "${{ steps.changes.outputs.files }}" -split ","
 
           foreach ($file in $files) {
             $file = $file.Trim()
             if (-not $file) { continue }
+            $fileName = Split-Path $file -Leaf
 
-            Write-Host "`n=== Processing: $file ==="
+            Write-Host "`n=== Processing: $fileName ==="
             $sql = Get-Content -Path $file -Raw
             Write-Host "SQL: $sql"
 
+            # 1. Sheet yarat
             $sqlBytes = [System.Text.Encoding]::UTF8.GetBytes($sql)
             $sqlBase64 = [Convert]::ToBase64String($sqlBytes)
-
-            Write-Host "Creating sheet..."
-            $sqlBytes = [System.Text.Encoding]::UTF8.GetBytes($sql)
-            $sqlBase64 = [Convert]::ToBase64String($sqlBytes)
-
-            $sheetBody = @{
-              content = $sqlBase64
-            } | ConvertTo-Json
+            $sheetBody = @{ content = $sqlBase64 } | ConvertTo-Json
 
             $sheet = Invoke-RestMethod -Uri "$baseUrl/v1/$project/sheets" `
               -Method POST -ContentType "application/json" `
               -Headers $headers -Body $sheetBody
-
             Write-Host "Sheet: $($sheet.name)"
 
-            Write-Host "Creating plan..."
-            $planBody = @{
-              steps = @(
-                @{
-                  specs = @(
-                    @{
-                      id = [guid]::NewGuid().ToString()
-                      changeDatabaseConfig = @{
-                        target = $targetDb.name
-                        sheet  = $sheet.name
-                        type   = "MIGRATE"
-                      }
-                    }
-                  )
+            # 2. Plan yarat
+            $planJson = @"
+          {
+            "title": "Migration: $fileName (commit: ${{ github.sha }})",
+            "specs": [
+              {
+                "id": "$([guid]::NewGuid().ToString())",
+                "changeDatabaseConfig": {
+                  "targets": ["instances/localprodtest/databases/test"],
+                  "sheet": "$($sheet.name)"
                 }
-              )
-            } | ConvertTo-Json -Depth 10
+              }
+            ]
+          }
+          "@
 
             $plan = Invoke-RestMethod -Uri "$baseUrl/v1/$project/plans" `
               -Method POST -ContentType "application/json" `
-              -Headers $headers -Body $planBody
-
+              -Headers $headers -Body $planJson
             Write-Host "Plan: $($plan.name)"
 
-            Write-Host "Creating issue..."
-            $issueBody = @{
-              title       = "Migration: $(Split-Path $file -Leaf)"
-              description = "Auto-deploy from commit ${{ github.sha }}"
-              type        = "DATABASE_CHANGE"
-              plan        = $plan.name
-            } | ConvertTo-Json
+            # 3. Issue yarat
+            $issueJson = @"
+          {
+            "title": "Migration: $fileName",
+            "description": "Auto-created from commit ${{ github.sha }} by GitHub Actions",
+            "type": "DATABASE_CHANGE",
+            "plan": "$($plan.name)"
+          }
+          "@
 
             $issue = Invoke-RestMethod -Uri "$baseUrl/v1/$project/issues" `
               -Method POST -ContentType "application/json" `
-              -Headers $headers -Body $issueBody
-
+              -Headers $headers -Body $issueJson
             Write-Host "Issue: $($issue.name)"
 
-            Write-Host "Creating rollout..."
-            $rolloutBody = @{
-              plan = $plan.name
-            } | ConvertTo-Json
-
-            $rollout = Invoke-RestMethod -Uri "$baseUrl/v1/$project/rollouts" `
+            # 4. Rollout yarat
+            $rollout = Invoke-RestMethod -Uri "$baseUrl/v1/$($plan.name)/rollout" `
               -Method POST -ContentType "application/json" `
-              -Headers $headers -Body $rolloutBody
-
+              -Headers $headers -Body '{}'
             Write-Host "Rollout: $($rollout.name)"
-            Write-Host "=== Done: $file ==="
+
+            Write-Host "=== Issue created. Waiting for DBA approval in Bytebase UI ==="
           }
 
-          Write-Host "`nAll migrations submitted!"
+          Write-Host "`nAll migration issues created. DBA approval required in Bytebase."
