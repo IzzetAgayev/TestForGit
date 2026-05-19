@@ -18,7 +18,7 @@ jobs:
 
       - name: Login to Bytebase
         id: login
-        shell: pwsh
+        shell: powershell
         run: |
           Write-Host "Authenticating with Bytebase..."
 
@@ -35,8 +35,7 @@ jobs:
               -Body $body
           } catch {
             Write-Host "Failed to authenticate!"
-            Write-Host "Error: $_"
-            Write-Host "Response: $($_.Exception.Response)"
+            Write-Host "Error: $($_.Exception.Message)"
             exit 1
           }
 
@@ -49,11 +48,11 @@ jobs:
             exit 1
           }
 
-          "token=$token" | Out-File -Append -FilePath $env:GITHUB_OUTPUT
+          "token=$token" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
           Write-Host "Successfully authenticated with Bytebase"
 
       - name: Test connectivity
-        shell: pwsh
+        shell: powershell
         run: |
           $token = "${{ steps.login.outputs.token }}"
           $headers = @{ Authorization = "Bearer $token" }
