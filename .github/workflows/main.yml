@@ -20,44 +20,139 @@ jobs:
         id: login
         shell: powershell
         run: |
-          Write-Host "Authenticating with Bytebase..."
-
           $body = @{
             email    = "${{ secrets.BYTEBASE_SERVICE_ACCOUNT }}"
             password = "${{ secrets.BYTEBASE_SERVICE_ACCOUNT_SECRET }}"
           } | ConvertTo-Json
 
-          try {
-            $response = Invoke-RestMethod -Uri "${{ secrets.BYTEBASE_URL }}/v1/auth/login" `
-              -Method POST `
-              -ContentType "application/json" `
-              -Body $body
-          } catch {
-            Write-Host "Failed to authenticate!"
-            Write-Host "Error: $($_.Exception.Message)"
-            exit 1
-          }
+          $response = Invoke-RestMethod -Uri "${{ secrets.BYTEBASE_URL }}/v1/auth/login" `
+            -Method POST -ContentType "application/json" -Body $body
 
           $token = $response.accessToken
           if (-not $token) { $token = $response.token }
-
-          if (-not $token) {
-            Write-Host "No token in response!"
-            exit 1
-          }
+          if (-not $token) { Write-Host "No token!"; exit 1 }
 
           "token=$token" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
-          Write-Host "Successfully authenticated with Bytebase"
+          Write-Host "Authenticated successfully"
 
-      - name: Test connectivity
+      - name: Get changed SQL files
+        id: changes
+        shell: powershell
+        run: |
+          $files = git diff --name-only HEAD~1 HEAD -- "migrations/*.sql"
+          if (-not $files) {
+            Write-Host "No SQL changes detected"
+            "has_changes=false" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+            exit 0
+          }
+          Write-Host "Changed SQL files:"
+          $files | ForEach-Object { Write-Host "  $_" }
+          $fileList = ($files -join ",")
+          "has_changes=true" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+          "files=$fileList" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+
+      - name: Apply migrations to Bytebase
+        if: steps.changes.outputs.has_changes == 'true'
         shell: powershell
         run: |
           $token = "${{ steps.login.outputs.token }}"
+          $baseUrl = "${{ secrets.BYTEBASE_URL }}"
+          $project = "${{ secrets.BYTEBASE_PROJECT }}"
           $headers = @{ Authorization = "Bearer $token" }
 
-          $response = Invoke-RestMethod -Uri "${{ secrets.BYTEBASE_URL }}/v1/${{ secrets.BYTEBASE_PROJECT }}/databases" `
-            -Method GET `
-            -Headers $headers
+          # Get database list to find target
+          $dbResponse = Invoke-RestMethod -Uri "$baseUrl/v1/$project/databases" `
+            -Method GET -Headers $headers
 
-          Write-Host "Databases:"
-          $response | ConvertTo-Json -Depth 5
+          Write-Host "Available databases:"
+          $dbResponse.databases | ForEach-Object { Write-Host "  $($_.name)" }
+
+          $targetDb = $dbResponse.databases | Where-Object { $_.name -match "databases/test$" } | Select-Object -First 1
+          if (-not $targetDb) {
+            Write-Host "Target database 'test' not found!"
+            exit 1
+          }
+          Write-Host "Target: $($targetDb.name)"
+
+          $files = "${{ steps.changes.outputs.files }}" -split ","
+
+          foreach ($file in $files) {
+            $file = $file.Trim()
+            if (-not $file) { continue }
+
+            Write-Host "`n=== Processing: $file ==="
+            $sql = Get-Content -Path $file -Raw
+            Write-Host "SQL: $sql"
+
+            # Base64 encode for sheet
+            $sqlBytes = [System.Text.Encoding]::UTF8.GetBytes($sql)
+            $sqlBase64 = [Convert]::ToBase64String($sqlBytes)
+
+            # 1. Create Sheet
+            Write-Host "Creating sheet..."
+            $sheetBody = @{
+              title   = "Migration: $(Split-Path $file -Leaf)"
+              content = $sqlBase64
+            } | ConvertTo-Json
+
+            $sheet = Invoke-RestMethod -Uri "$baseUrl/v1/$project/sheets" `
+              -Method POST -ContentType "application/json" `
+              -Headers $headers -Body $sheetBody
+
+            Write-Host "Sheet: $($sheet.name)"
+
+            # 2. Create Plan
+            Write-Host "Creating plan..."
+            $planBody = @{
+              steps = @(
+                @{
+                  specs = @(
+                    @{
+                      id = [guid]::NewGuid().ToString()
+                      changeDatabaseConfig = @{
+                        target = $targetDb.name
+                        sheet  = $sheet.name
+                        type   = "MIGRATE"
+                      }
+                    }
+                  )
+                }
+              )
+            } | ConvertTo-Json -Depth 10
+
+            $plan = Invoke-RestMethod -Uri "$baseUrl/v1/$project/plans" `
+              -Method POST -ContentType "application/json" `
+              -Headers $headers -Body $planBody
+
+            Write-Host "Plan: $($plan.name)"
+
+            # 3. Create Issue
+            Write-Host "Creating issue..."
+            $issueBody = @{
+              title       = "Migration: $(Split-Path $file -Leaf)"
+              description = "Auto-deploy from commit ${{ github.sha }}"
+              type        = "DATABASE_CHANGE"
+              plan        = $plan.name
+            } | ConvertTo-Json
+
+            $issue = Invoke-RestMethod -Uri "$baseUrl/v1/$project/issues" `
+              -Method POST -ContentType "application/json" `
+              -Headers $headers -Body $issueBody
+
+            Write-Host "Issue: $($issue.name)"
+
+            # 4. Create Rollout
+            Write-Host "Creating rollout..."
+            $rolloutBody = @{
+              plan = $plan.name
+            } | ConvertTo-Json
+
+            $rollout = Invoke-RestMethod -Uri "$baseUrl/v1/$project/rollouts" `
+              -Method POST -ContentType "application/json" `
+              -Headers $headers -Body $rolloutBody
+
+            Write-Host "Rollout: $($rollout.name)"
+            Write-Host "=== Done: $file ==="
+          }
+
+          Write-Host "`nAll migrations submitted!"
