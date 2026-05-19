@@ -25,7 +25,6 @@ jobs:
           $body = @{
             email    = "${{ secrets.BYTEBASE_SERVICE_ACCOUNT }}"
             password = "${{ secrets.BYTEBASE_SERVICE_ACCOUNT_SECRET }}"
-            web      = $true
           } | ConvertTo-Json
 
           try {
@@ -44,7 +43,6 @@ jobs:
 
           if (-not $token) {
             Write-Host "No token in response!"
-            Write-Host "Response: $($response | ConvertTo-Json)"
             exit 1
           }
 
