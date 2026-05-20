@@ -1,5 +1,1 @@
-CREATE TABLE git_approval_test (id INT, description NVARCHAR(200));
-
-
-
-
+CREATE TABLE git_final_test (id INT, name NVARCHAR(100));
